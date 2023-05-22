@@ -39,7 +39,6 @@ def timeit(method):
         return result
     return timed
 
-
 def create_grid(start,end,number_of_nodes):
     # Number_of_nodes includes begin and start node
     # Number of inner nodes:  number_of_nodes-2
@@ -50,7 +49,6 @@ def create_grid(start,end,number_of_nodes):
     grid_data = {"grid_values": np.linspace(start,end,number_of_nodes),
                  "grid_spacing": h}
     return grid_data
-
 
 def create_system_matrx(time_step,node_spacing,num_nodes,parameters,lhs = True):
     
@@ -101,7 +99,6 @@ def create_system_matrx(time_step,node_spacing,num_nodes,parameters,lhs = True):
     if lhs:
         return LHS_system_matrx+unit_matrix
     return -LHS_system_matrx+unit_matrix
-
 
 def solve_problem(y0,spatial_grid,time_grid,parameters:dict,source_term,verbose=False):
 
@@ -174,8 +171,6 @@ def solve_problem(y0,spatial_grid,time_grid,parameters:dict,source_term,verbose=
         y0 = solution
                 
     return {"sol":solution_array}
-    # Source term
-
 
 def source_term(x,t,x0,sigma):
     q0   = 0.01*t
