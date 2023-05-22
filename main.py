@@ -39,6 +39,7 @@ def timeit(method):
         return result
     return timed
 
+
 def create_grid(start,end,number_of_nodes):
     # Number_of_nodes includes begin and start node
     # Number of inner nodes:  number_of_nodes-2
@@ -49,6 +50,7 @@ def create_grid(start,end,number_of_nodes):
     grid_data = {"grid_values": np.linspace(start,end,number_of_nodes),
                  "grid_spacing": h}
     return grid_data
+
 
 def create_system_matrx(time_step,node_spacing,num_nodes,parameters,lhs = True):
     
@@ -82,23 +84,37 @@ def create_system_matrx(time_step,node_spacing,num_nodes,parameters,lhs = True):
     
     coefficient  = diffusion_coefficient / (4*node_spacing**2)
 
-    central_vector  = (time_step/2*(diffusion_coefficient  / node_spacing**2) + time_step*np.abs(velocity_x) / 2*node_spacing + time_step*alpha/2)*np.ones(num_nodes)
-    left_vector     = (-time_step*(coefficient  + np.maximum(velocity_x,0)/ 2*node_spacing))*np.ones(num_nodes-1)
-    right_vector    = (-time_step*(coefficient  - np.minimum(velocity_x,0)/ 2*node_spacing))*np.ones(num_nodes-1)
+    left_coefficient  = (-time_step*(coefficient  + np.maximum(velocity_x,0)/ 2*node_spacing))
+    right_coefficient = (-time_step*(coefficient  - np.minimum(velocity_x,0)/ 2*node_spacing))
 
-    unit_matrix       = np.eye(num_nodes)
+    central_vector  = (time_step/2*(diffusion_coefficient  / node_spacing**2) + time_step*np.abs(velocity_x) / 2*node_spacing + time_step*alpha/2)*np.ones(num_nodes)
+    left_vector     = left_coefficient*np.ones(num_nodes-1)
+    right_vector    = right_coefficient*np.ones(num_nodes-1)
+
+    unit_matrix     = np.eye(num_nodes)
 
     k = [left_vector,central_vector,right_vector]
     offset = [-1,0,1]
     LHS_system_matrx = diags(k,offset).toarray()
 
-    # Set Neumann boundary condition
-    #TODO: NEUMANN
-    #TODO: Variabel über theta
-   
     if lhs:
-        return LHS_system_matrx+unit_matrix
-    return -LHS_system_matrx+unit_matrix
+        LHS_system_matrx =  LHS_system_matrx+unit_matrix
+    else:
+        LHS_system_matrx = -LHS_system_matrx+unit_matrix
+
+    # Set Neumann boundary condition
+    neumann_coeffcient = (2*node_spacing*right_coefficient) / diffusion_coefficient *(np.linalg.norm(velocity_x)+np.abs(velocity_x))
+    LHS_system_matrx[-1,-1] += neumann_coeffcient
+    LHS_system_matrx[-1,-2] += right_coefficient
+    
+    #TODO: Variabel über theta
+
+    return LHS_system_matrx
+
+
+def source_term(x,t,x0,sigma):
+    q0   = 0.01*t
+    return q0 * np.exp( -(x0-x)**2 / 2*sigma**2 ) 
 
 def solve_problem(y0,spatial_grid,time_grid,parameters:dict,source_term,verbose=False):
 
@@ -121,8 +137,8 @@ def solve_problem(y0,spatial_grid,time_grid,parameters:dict,source_term,verbose=
     t_total = 0 
 
     # Source parameters:
-    x0 = np.array([2.5])
-    sigma = 0.1
+    x0 = np.array([0.5])
+    sigma = 10
 
     # Solve equation system for all time steps
     solution_array = np.zeros((time_values.shape[0],
@@ -155,7 +171,6 @@ def solve_problem(y0,spatial_grid,time_grid,parameters:dict,source_term,verbose=
         if verbose:
             logger.info("Iteration:                     %i  ", t_iter )    
             logger.info("Current time step:             %f  ", time_values[t_iter])    
-            
             #logger.info("Time creating system matrix:   %.4f", t_create_LHS_total )
             #logger.info("Time creating right hand side: %.4f", t_create_RHS_total )
             logger.info("Total time creating problem:   %.4f", t_total )
@@ -164,38 +179,37 @@ def solve_problem(y0,spatial_grid,time_grid,parameters:dict,source_term,verbose=
         solution = np.linalg.solve(system_matrix_lhs,rhs)
 
         # Set Dirichlet bounday conditions
-        solution[0] = 0
+        solution[0] = 0.0
             
         # Save solution
-        solution_array[t_iter,:] = solution
+        solution_array[t_iter+1,:] = solution
         y0 = solution
                 
+    solution_array[-1,:] = solution
+    
     return {"sol":solution_array}
 
-def source_term(x,t,x0,sigma):
-    q0   = 0.01*t
-    return q0 * np.exp( -(x0-x)**2 / 2*sigma**2 ) 
 
 def main():
         
     # Create grid
     start           = 0
-    end             = 5
+    end             = 1
     number_of_spatial_nodes = 200
     spatial_grid = create_grid(start,end,number_of_spatial_nodes)
 
     # Create time stepping
     start           = 0
     end             = 10
-    number_of_nodes = 1000
+    number_of_nodes = 200
     time_grid = create_grid(start,end,number_of_nodes)
 
     # Initial values
     y0 = np.zeros(number_of_spatial_nodes)
 
     # Parameters
-    parameters = {"diffusion_coefficient":0.001,
-                  "velocity_x":0.0,
+    parameters = {"diffusion_coefficient":0.0001,
+                  "velocity_x":1.0,
                   "alpha":0.001,}
 
     # Solve problem
