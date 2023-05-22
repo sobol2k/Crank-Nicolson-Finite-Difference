@@ -52,18 +52,27 @@ def create_grid(start,end,number_of_nodes):
     return grid_data
 
 
-def create_system_matrx(time_step,node_spacing,num_nodes,parameters,lhs = True):
+def create_system_matrx(time_step,node_spacing,num_nodes,problem_parameters,weighting_factor,lhs = True):
     
 
     """
     
     At the moment \theta = 0.5 is implemented. Will be changed for more general implementaion with 0 \leq \theta \leq 1
     """
+ 
+    try:
+        0 < weighting_factor and weighting_factor< 1
+        if lhs:
+            kappa = 1-weighting_factor
+        else:
+            kappa = weighting_factor
+    except:
+        raise TypeError("Numerical weight factor need to lie between 0 and 1")
 
     # Problem parameters
-    diffusion_coefficient = parameters.get("diffusion_coefficient",1)
-    velocity_x            = parameters.get("velocity_x",0.1)
-    alpha                 = parameters.get("alpha",0.1)
+    diffusion_coefficient = problem_parameters.get("diffusion_coefficient",1)
+    velocity_x            = problem_parameters.get("velocity_x",0.1)
+    alpha                 = problem_parameters.get("alpha",0.1)
 
     # Validate input
     if not isinstance(time_step, float):
@@ -82,12 +91,12 @@ def create_system_matrx(time_step,node_spacing,num_nodes,parameters,lhs = True):
         logger.error("Number of nodes must be an integer.")
         raise TypeError("Number of nodes must be an integer.")
     
-    coefficient  = diffusion_coefficient / (4*node_spacing**2)
+    coefficient  =  diffusion_coefficient / (2*node_spacing**2)
 
-    left_coefficient  = (-time_step*(coefficient  + np.maximum(velocity_x,0)/ 2*node_spacing))
-    right_coefficient = (-time_step*(coefficient  - np.minimum(velocity_x,0)/ 2*node_spacing))
+    left_coefficient  = (-time_step*kappa*(coefficient  +  np.maximum(velocity_x,0)/ node_spacing))
+    right_coefficient = (-time_step*kappa*(coefficient  -  np.minimum(velocity_x,0)/ node_spacing))
 
-    central_vector  = (time_step/2*(diffusion_coefficient  / node_spacing**2) + time_step*np.abs(velocity_x) / 2*node_spacing + time_step*alpha/2)*np.ones(num_nodes)
+    central_vector  = (kappa * time_step*(diffusion_coefficient  / node_spacing**2) + kappa * time_step*np.abs(velocity_x) / node_spacing + kappa * time_step*alpha)*np.ones(num_nodes)
     left_vector     = left_coefficient*np.ones(num_nodes-1)
     right_vector    = right_coefficient*np.ones(num_nodes-1)
 
@@ -103,20 +112,18 @@ def create_system_matrx(time_step,node_spacing,num_nodes,parameters,lhs = True):
         LHS_system_matrx = -LHS_system_matrx+unit_matrix
 
     # Set Neumann boundary condition
-    neumann_coeffcient = (2*node_spacing*right_coefficient) / diffusion_coefficient *(np.linalg.norm(velocity_x)+np.abs(velocity_x))
-    LHS_system_matrx[-1,-1] += neumann_coeffcient
-    LHS_system_matrx[-1,-2] += right_coefficient
+    neumann_coeffcient = -(2*node_spacing*left_coefficient) / diffusion_coefficient *(np.linalg.norm(velocity_x)+np.abs(velocity_x))
+    LHS_system_matrx[0,0] += neumann_coeffcient
+    LHS_system_matrx[0,1] += left_coefficient
     
-    #TODO: Variabel über theta
-
     return LHS_system_matrx
 
 
 def source_term(x,t,x0,sigma):
-    q0   = 0.01*t
+    q0   = 0.015*t
     return q0 * np.exp( -(x0-x)**2 / 2*sigma**2 ) 
 
-def solve_problem(y0,spatial_grid,time_grid,parameters:dict,source_term,verbose=False):
+def solve_problem(y0,spatial_grid,time_grid,weighting_factor,problem_parameters:dict,boundary_parameters:dict,source_term,verbose=False):
 
     # Spatial grid data
     spatial_values = spatial_grid.get("grid_values")
@@ -145,8 +152,8 @@ def solve_problem(y0,spatial_grid,time_grid,parameters:dict,source_term,verbose=
                                spatial_values.shape[0]))
     
     # Set Dirichlet bounday conditions and save start values
-    #TODO:Boundary values via bounday dict
-    y0[0] = 0
+    dirichlet_value = boundary_parameters["dirichlet"]
+    y0[-1] = dirichlet_value
     solution_array[0,:] = y0
 
     for t_iter in range(0,time_values.shape[0]-1):
@@ -159,14 +166,14 @@ def solve_problem(y0,spatial_grid,time_grid,parameters:dict,source_term,verbose=
         next_time    = time_values[t_iter+1]
 
         # Create system matrix LHS
-        system_matrix_lhs = create_system_matrx(h_time,h_spatial,num_nodes,parameters,lhs = True)
+        system_matrix_lhs = create_system_matrx(h_time,h_spatial,num_nodes,problem_parameters,weighting_factor,lhs = True)
         
         # Create RHS
         # The last addition of source_term is due to Crank Nicholson schema.
-        system_matrix_rhs = create_system_matrx(h_time,h_spatial,num_nodes,parameters,lhs = False)
+        system_matrix_rhs = create_system_matrx(h_time,h_spatial,num_nodes,problem_parameters,weighting_factor,lhs = False)
         rhs               = system_matrix_rhs@y
-        rhs               += h_time / 2 * source_term(spatial_values,current_time,x0,sigma)
-        rhs               += h_time / 2 * source_term(spatial_values,next_time,x0,sigma)
+        rhs               += h_time * weighting_factor     * source_term(spatial_values,current_time,x0,sigma)
+        rhs               += h_time * (1-weighting_factor) * source_term(spatial_values,next_time,x0,sigma)
 
         if verbose:
             logger.info("Iteration:                     %i  ", t_iter )    
@@ -179,7 +186,7 @@ def solve_problem(y0,spatial_grid,time_grid,parameters:dict,source_term,verbose=
         solution = np.linalg.solve(system_matrix_lhs,rhs)
 
         # Set Dirichlet bounday conditions
-        solution[0] = 0.0
+        solution[-1] = 0.0
             
         # Save solution
         solution_array[t_iter+1,:] = solution
@@ -194,29 +201,34 @@ def main():
         
     # Create grid
     start           = 0
-    end             = 1
-    number_of_spatial_nodes = 200
+    end             = 10
+    number_of_spatial_nodes = 500
     spatial_grid = create_grid(start,end,number_of_spatial_nodes)
 
     # Create time stepping
     start           = 0
     end             = 10
-    number_of_nodes = 200
+    number_of_nodes = 500
     time_grid = create_grid(start,end,number_of_nodes)
 
     # Initial values
     y0 = np.zeros(number_of_spatial_nodes)
 
     # Parameters
-    parameters = {"diffusion_coefficient":0.0001,
-                  "velocity_x":1.0,
-                  "alpha":0.001,}
-
+    problem_parameters = {"diffusion_coefficient":0.001,
+                          "velocity_x":1.0,
+                          "alpha":0.001,}
+    
+    boundary_parameters = {"dirichlet":0.0}
+    
+    # Numerical weighting
+    weighting_factor = 0.75
+    
     # Solve problem
-    solution = solve_problem(y0,spatial_grid,time_grid,parameters,source_term,verbose = True)
+    solution = solve_problem(y0,spatial_grid,time_grid,weighting_factor,problem_parameters,boundary_parameters,source_term,verbose = True)
     
     # Print solution
-    plt.imshow(solution["sol"], cmap='hot', interpolation='nearest')
+    plt.imshow(solution["sol"], cmap='Reds', interpolation='nearest')
     plt.xlabel("x")
     plt.ylabel("t")
     plt.show()
