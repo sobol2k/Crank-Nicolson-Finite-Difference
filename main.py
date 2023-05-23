@@ -52,7 +52,7 @@ def main():
 
 
     # Print solution
-    filepath = "F:/Uni/Zuse/simlopt/simlopt/"
+    filepath = "..."
     print_solution(solution,filepath,"heatmap.png")
 
 if __name__ == "__main__":
